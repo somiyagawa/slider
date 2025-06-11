@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Markdown Slide Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+  />
+  <style>
+    :root {
+      --font-primary: "Inter", "Noto Sans JP", sans-serif;
+      --color-primary: #3b82f6;
+      --color-secondary: #8b5cf6;
+      --color-text: #1e293b;
+      --color-text-secondary: #475569;
+      --bg-editor: #1e293b;
+      --fg-editor: #e2e8f0;
+      --bg-light: #f1f5f9;
+      --color-border: #e2e8f0;
+    }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      font-family: var(--font-primary);
+      background-color: var(--bg-light);
+      user-select: none;
+    }
+    #editor-container {
+        min-width: 200px;
+        max-width: calc(100% - 300px);
+        flex-shrink: 0;
+    }
+    #editor {
+      width: 100%;
+      height: 100%;
+      background: var(--bg-editor);
+      color: var(--fg-editor);
+      border: none;
+      padding: 1rem;
+      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+      resize: none;
+      outline: none;
+    }
+    #resizer {
+        flex-shrink: 0;
+        cursor: col-resize;
+        width: 8px;
+        background-color: #475569;
+        transition: background-color 0.2s;
+    }
+    #resizer:hover, .resizing {
+        background-color: var(--color-primary);
+    }
+    #preview-container {
+      flex-grow: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      padding: 2rem;
+      min-width: 300px;
+    }
+    #preview-area {
+      flex-grow: 1;
+      width: 100%;
+      background: #e2e8f0;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      border-radius: 0.5rem;
+    }
+     #preview-area:active {
+        cursor: grabbing;
+     }
+    #slide-deck {
+        width: 1280px;
+        height: 720px; /* 16:9 Aspect Ratio */
+        position: relative;
+        transform-origin: center center;
+        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    }
+
+    .slide-wrapper {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s, transform 0.3s;
+        transform: translateX(30px);
+    }
+    .slide-wrapper.active { opacity: 1; visibility: visible; transform: translateX(0); }
+    .slide-wrapper.previous { transform: translateX(-30px); }
+    
+    .slide {
+      box-sizing: border-box;
+      width: 100%; height: 100%;
+      padding: 4rem 5rem;
+      display: flex; flex-direction: column; justify-content: center;
+      background: #ffffff; color: var(--color-text);
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }
+    .slide.title-slide {
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: #fff;
+      text-align: center;
+    }
+    .slide h1 { font-size: 3.5rem; margin-bottom: 1rem; }
+    .slide.title-slide h1 { font-size: 4.5rem; }
+    .slide h2 { font-size: 2.2rem; margin-bottom: 1.5rem; border-bottom: 3px solid var(--color-primary); padding-bottom: .75rem; }
+    .slide h3 { font-size: 1.7rem; margin-bottom: 1rem; }
+    .slide p, .slide li { font-size: 1.4rem; line-height: 1.8; color: var(--color-text-secondary); }
+    .slide ul { list-style: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
+    
+    .controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      z-index: 20;
+    }
+    .controls button {
+      width: 2.5rem;
+      height: 2.5rem;
+      background: rgba(255,255,255,0.8);
+      border: 1px solid var(--color-border);
+      border-radius: 9999px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      transition: all 0.2s ease;
+      color: #475569;
+    }
+    .controls button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .controls button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #slide-counter {
+        font-weight: 600;
+        color: var(--color-text-secondary);
+        background: rgba(255,255,255,0.8);
+        padding: 0.5rem 1rem;
+        border-radius: 99px;
+        border: 1px solid var(--color-border);
+    }
+
+    /* Modal */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s, visibility 0.3s;
+    }
+    .modal-overlay.visible { opacity: 1; visibility: visible; }
+    .modal-content {
+        background: white;
+        padding: 2rem;
+        border-radius: 1rem;
+        width: 90%;
+        max-width: 500px;
+        transform: scale(0.95);
+        transition: transform 0.3s;
+    }
+    .modal-overlay.visible .modal-content { transform: scale(1); }
+  </style>
+</head>
+<body class="overflow-hidden">
+
+  <!-- Left Panel: Editor -->
+  <div id="editor-container" class="h-full flex flex-col bg-slate-800 shadow-2xl z-10" style="width: 50%;">
+    <div class="p-3 bg-slate-900 flex justify-between items-center text-white flex-shrink-0">
+      <h1 class="text-xl font-bold">Markdown Editor</h1>
+      <div class="flex items-center gap-2">
+        <button id="ai-create-btn" title="AIで新規スライド作成" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-3 rounded-lg transition-colors disabled:bg-gray-500 disabled:cursor-not-allowed"><i class="fas fa-magic"></i></button>
+        <button id="ai-improve-btn" title="このスライドをAIが改善" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-3 rounded-lg transition-colors disabled:bg-gray-500 disabled:cursor-not-allowed"><i class="fas fa-lightbulb"></i></button>
+        <button id="settings-btn" title="設定" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg transition-colors"><i class="fas fa-cog"></i></button>
+        <button id="download-btn" title="HTMLとしてダウンロード" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-3 rounded-lg transition-colors"><i class="fas fa-download"></i></button>
+      </div>
+    </div>
+    <textarea id="editor" class="w-full flex-grow"></textarea>
+  </div>
+
+  <!-- Resizer -->
+  <div id="resizer"></div>
+
+  <!-- Right Panel: Preview -->
+  <div id="preview-container">
+    <div id="preview-area">
+        <div id="slide-deck">
+            <!-- Slides will be injected here -->
+        </div>
+        <div class="controls">
+          <button id="prev-btn"><i class="fas fa-arrow-left"></i></button>
+          <div id="slide-counter">1 / 1</div>
+          <button id="next-btn"><i class="fas fa-arrow-right"></i></button>
+        </div>
+        <div class="absolute bottom-4 right-4 flex items-center gap-2 bg-black/50 text-white text-sm px-3 py-1 rounded-full">
+            <span id="zoom-level">100%</span>
+            <button id="reset-view-btn" class="w-6 h-6 flex items-center justify-center hover:bg-white/20 rounded-full"><i class="fas fa-expand"></i></button>
+        </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-overlay">
+      <div class="modal-content">
+          <h2 class="text-2xl font-bold mb-4">設定</h2>
+          <div class="mb-4">
+              <label for="api-key-input" class="block font-bold mb-2">Gemini API Key</label>
+              <input type="password" id="api-key-input" class="w-full p-2 border rounded-md" placeholder="ご自身のAPIキーを入力">
+              <p class="text-sm text-gray-500 mt-1">APIキーはブラウザ内にのみ保存されます。</p>
+          </div>
+          <div class="flex justify-end gap-2">
+              <button id="close-modal-btn" class="bg-gray-200 hover:bg-gray-300 font-bold py-2 px-4 rounded-lg">キャンセル</button>
+              <button id="save-api-key-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">保存</button>
+          </div>
+      </div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const editorContainer = document.getElementById('editor-container');
+      const editor = document.getElementById("editor");
+      const previewArea = document.getElementById("preview-area");
+      const slideDeck = document.getElementById('slide-deck');
+      const resizer = document.getElementById('resizer');
+
+      const prevBtn = document.getElementById("prev-btn");
+      const nextBtn = document.getElementById("next-btn");
+      const counter = document.getElementById("slide-counter");
+      const downloadBtn = document.getElementById("download-btn");
+      const zoomLevelDisplay = document.getElementById('zoom-level');
+      const resetViewBtn = document.getElementById('reset-view-btn');
+      
+      const settingsBtn = document.getElementById('settings-btn');
+      const settingsModal = document.getElementById('settings-modal');
+      const closeModalBtn = document.getElementById('close-modal-btn');
+      const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+      const apiKeyInput = document.getElementById('api-key-input');
+      
+      const aiCreateBtn = document.getElementById('ai-create-btn');
+      const aiImproveBtn = document.getElementById('ai-improve-btn');
+
+      let slides = [];
+      let current = 0;
+      let scale = 1;
+      let panX = 0;
+      let panY = 0;
+      const geminiApiKeyName = 'gemini-api-key';
+
+      editor.value = `# タイトル
+サブタイトル
+
+---
+
+## スライド2のタイトル
+- 箇条書き1
+- 箇条書き2
+
+---
+
+## ありがとうございました！`;
+
+      function escapeHTML(str) {
+        return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+
+      function parseMarkdown(md) {
+          const lines = md.split("\n");
+          let html = "";
+          let inList = false;
+
+          for (let raw of lines) {
+              const line = raw.trim();
+              if (line.startsWith('## ')) {
+                  if (inList) { html += '</ul>'; inList = false; }
+                  html += `<h2>${escapeHTML(line.substring(3))}</h2>`;
+              } else if (line.startsWith('# ')) {
+                  if (inList) { html += '</ul>'; inList = false; }
+                  html += `<h1>${escapeHTML(line.substring(2))}</h1>`;
+              } else if (line.startsWith('- ') || line.startsWith('* ')) {
+                  if (!inList) { html += '<ul>'; inList = true; }
+                  html += `<li>${escapeHTML(line.substring(2))}</li>`;
+              } else if (line) {
+                  if (inList) { html += '</ul>'; inList = false; }
+                  html += `<p>${escapeHTML(line)}</p>`;
+              }
+          }
+          if (inList) html += '</ul>';
+          return html;
+      }
+
+      function render() {
+        const parts = editor.value.split(/^\s*---\s*$/m);
+        slides.forEach(s => s.remove());
+        slides = [];
+        slideDeck.innerHTML = '';
+        parts.forEach((part, i) => {
+          const wrapper = document.createElement("div");
+          wrapper.className = "slide-wrapper";
+          const slide = document.createElement("div");
+          slide.className = "slide";
+          if (i === 0) slide.classList.add("title-slide");
+          
+          let slideHTML = parseMarkdown(part);
+          if (i === 0) {
+              const h1Regex = /(<h1>.*<\/h1>)/;
+              const match = slideHTML.match(h1Regex);
+              if (match) {
+                  const pTag = slideHTML.replace(h1Regex, '').trim();
+                  if(pTag.startsWith('<p>') && pTag.endsWith('</p>')) {
+                     slideHTML = match[1] + `<p class="subtitle">${pTag.substring(3, pTag.length - 4)}</p>`;
+                  }
+              }
+          }
+
+          slide.innerHTML = slideHTML;
+          wrapper.appendChild(slide);
+          slideDeck.appendChild(wrapper);
+          slides.push(wrapper);
+        });
+        if(current >= slides.length) current = slides.length - 1;
+        if(current < 0) current = 0;
+        show(current);
+        resetView();
+      }
+
+      function show(idx) {
+        if (idx < 0 || idx >= slides.length) return;
+        
+        const oldSlide = slides[current];
+        if (oldSlide) {
+            oldSlide.classList.remove("active");
+            if (idx > current) oldSlide.classList.add("previous");
+        }
+
+        current = idx;
+        const newSlide = slides[current];
+        if (newSlide) {
+            newSlide.classList.remove("previous");
+            newSlide.classList.add("active");
+        }
+        updateControls();
+      }
+
+      function updateControls() {
+        if(slides.length === 0) {
+            counter.textContent = `0 / 0`;
+            prevBtn.disabled = true;
+            nextBtn.disabled = true;
+            return;
+        };
+        counter.textContent = `${current + 1} / ${slides.length}`;
+        prevBtn.disabled = current === 0;
+        nextBtn.disabled = current === slides.length - 1;
+      }
+      
+      function applyTransform() {
+          const baseScale = Math.min(previewArea.clientWidth / 1280, previewArea.clientHeight / 720);
+          slideDeck.style.transform = `translate(${panX}px, ${panY}px) scale(${scale * baseScale})`;
+          zoomLevelDisplay.textContent = `${Math.round(scale * 100)}%`;
+      }
+
+      function resetView(){
+          scale = 1;
+          panX = 0;
+          panY = 0;
+          applyTransform();
+      }
+
+      // Pan and Zoom Logic
+      let isPanning = false;
+      let startX, startY, startPanX, startPanY;
+
+      previewArea.addEventListener('mousedown', (e) => {
+          isPanning = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          startPanX = panX;
+          startPanY = panY;
+          previewArea.style.cursor = 'grabbing';
+      });
+      
+      window.addEventListener('mouseup', () => {
+          isPanning = false;
+          previewArea.style.cursor = 'grab';
+      });
+
+      window.addEventListener('mousemove', (e) => {
+          if (!isPanning) return;
+          e.preventDefault();
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          panX = startPanX + dx;
+          panY = startPanY + dy;
+          applyTransform();
+      });
+
+      previewArea.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          const delta = -e.deltaY / 1000;
+          scale = Math.max(0.1, Math.min(5, scale + delta));
+          applyTransform();
+      });
+      
+      resetViewBtn.addEventListener('click', resetView);
+
+      // Resizer Logic
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizer.classList.add('resizing');
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', () => {
+                isResizing = false;
+                resizer.classList.remove('resizing');
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+                document.removeEventListener('mousemove', handleMouseMove);
+            }, { once: true });
+        });
+
+        function handleMouseMove(e) {
+            if (!isResizing) return;
+            const newEditorWidth = (e.clientX / window.innerWidth) * 100;
+            if (newEditorWidth > 15 && newEditorWidth < 85) {
+                editorContainer.style.width = `${newEditorWidth}%`;
+                applyTransform();
+            }
+        }
+
+
+      // Gemini API Functions
+      const callGemini = async (prompt, buttonToDisable) => {
+          const apiKey = localStorage.getItem(geminiApiKeyName);
+          if (!apiKey) {
+              alert("APIキーが設定されていません。設定画面からキーを保存してください。");
+              return null;
+          }
+          buttonToDisable.disabled = true;
+          buttonToDisable.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+          const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+          const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+
+          try {
+              const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+              if (!response.ok) throw new Error(`APIリクエストに失敗しました: ${response.status}`);
+              const result = await response.json();
+              if (result.candidates && result.candidates[0].content.parts) {
+                  return result.candidates[0].content.parts[0].text;
+              }
+              return "AIからの応答がありませんでした。";
+          } catch (error) {
+              alert(`エラー: ${error.message}`);
+              return null;
+          } finally {
+              buttonToDisable.disabled = false;
+              buttonToDisable.innerHTML = buttonToDisable.originalHTML;
+          }
+      };
+      
+      aiCreateBtn.originalHTML = aiCreateBtn.innerHTML;
+      aiImproveBtn.originalHTML = aiImproveBtn.innerHTML;
+
+      aiCreateBtn.addEventListener('click', async () => {
+          const topic = prompt("どのようなトピックのスライドを作成しますか？");
+          if (!topic) return;
+
+          const promptText = `以下のトピックについて、プレゼンテーション用のスライド1枚分の内容をMarkdown形式で作成してください。見出しは##（H2）を使用し、内容は箇条書きや段落で簡潔にまとめてください。\n\nトピック：${topic}`;
+          const result = await callGemini(promptText, aiCreateBtn);
+          if (result) {
+              editor.value += `\n\n---\n\n${result}`;
+              render();
+              show(slides.length - 1);
+          }
+      });
+      
+      aiImproveBtn.addEventListener('click', async () => {
+          const parts = editor.value.split(/^\s*---\s*$/m);
+          const currentSlideMarkdown = parts[current];
+          if (!currentSlideMarkdown || currentSlideMarkdown.trim() === '') {
+              alert("現在のスライドには改善する内容がありません。");
+              return;
+          }
+          
+          const promptText = `以下のMarkdownで書かれたスライドの内容を、より明確で、簡潔かつ魅力的な表現に改善してください。構成は維持し、表現のみを洗練させてください。改善後のMarkdownだけを返してください。\n\n---\n${currentSlideMarkdown}`;
+          const result = await callGemini(promptText, aiImproveBtn);
+          if (result) {
+              parts[current] = result;
+              editor.value = parts.join('\n\n---\n\n');
+              render();
+          }
+      });
+
+
+      // Settings Modal Logic
+      settingsBtn.addEventListener('click', () => {
+          apiKeyInput.value = localStorage.getItem(geminiApiKeyName) || '';
+          settingsModal.classList.add('visible');
+      });
+      closeModalBtn.addEventListener('click', () => settingsModal.classList.remove('visible'));
+      saveApiKeyBtn.addEventListener('click', () => {
+          const key = apiKeyInput.value.trim();
+          if(key) {
+              localStorage.setItem(geminiApiKeyName, key);
+              alert("APIキーを保存しました。");
+          } else {
+              localStorage.removeItem(geminiApiKeyName);
+              alert("APIキーを削除しました。");
+          }
+          settingsModal.classList.remove('visible');
+          checkApiKey();
+      });
+      
+      function checkApiKey() {
+          const hasKey = !!localStorage.getItem(geminiApiKeyName);
+          aiCreateBtn.disabled = !hasKey;
+          aiImproveBtn.disabled = !hasKey;
+          if(!hasKey){
+              aiCreateBtn.title = "AI機能を利用するにはAPIキーを設定してください";
+              aiImproveBtn.title = "AI機能を利用するにはAPIキーを設定してください";
+          } else {
+              aiCreateBtn.title = "AIで新規スライド作成";
+              aiImproveBtn.title = "このスライドをAIが改善";
+          }
+      }
+
+      editor.addEventListener("input", render);
+      prevBtn.addEventListener("click", () => show(current - 1));
+      nextBtn.addEventListener("click", () => show(current + 1));
+      downloadBtn.addEventListener("click", downloadFile);
+      window.addEventListener('resize', resetView);
+      
+      document.addEventListener("keydown", e => {
+        if (e.key === "ArrowLeft") show(current - 1);
+        if (e.key === "ArrowRight") show(current + 1);
+      });
+      
+      function downloadFile() {
+        const slideHtmlContent = Array.from(slides).map((wrapper, i) => {
+            const newWrapper = wrapper.cloneNode(true);
+            newWrapper.style.position = 'relative';
+            newWrapper.style.transform = 'none';
+            newWrapper.style.top = 'auto';
+            newWrapper.style.left = 'auto';
+            newWrapper.style.aspectRatio = '16/9';
+            newWrapper.style.height = '100vh';
+            newWrapper.style.display = 'none';
+            if(i===0) newWrapper.classList.add('active');
+
+            return newWrapper.outerHTML;
+        }).join('');
+
+        const fullHtml = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>Presentation</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"><style>
+        :root{--font-primary:"Inter","Noto Sans JP",sans-serif;--color-primary:#3b82f6;--color-text:#1e293b;--color-text-secondary:#475569;}
+        body{font-family:var(--font-primary);margin:0;height:100vh; background-color: #f1f5f9;}
+        .slide-wrapper{display:none;height:100vh;align-items:center;justify-content:center;} .slide-wrapper.active{display:flex;}
+        .slide{box-sizing:border-box;width:100%;max-width:1280px;height:720px;padding:3rem 4rem;display:flex;flex-direction:column;justify-content:center;background:#fff;color:var(--color-text);border-radius:0.75rem;box-shadow:0 10px 25px rgba(0,0,0,0.1);}.title-slide{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;text-align:center;}.slide h1{font-size:3rem;margin-bottom:1rem;}.title-slide h1{font-size:3.5rem;}.slide .subtitle{font-size:1.5rem;}.slide h2{font-size:2rem;margin-bottom:1rem;border-bottom:3px solid var(--color-primary);padding-bottom:.5rem;}.slide h3{font-size:1.5rem;margin-bottom:.75rem;}.slide p,.slide li{font-size:1.2rem;line-height:1.7;color:var(--color-text-secondary);}.slide ul{list-style:disc;padding-left:1.5rem;margin-bottom:1rem;}
+        .navigation-controls{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);z-index:10;display:flex;gap:1rem;align-items:center;}.nav-button{width:3rem;height:3rem;border-radius:9999px;border:none;box-shadow:0 4px 8px rgba(0,0,0,0.2);cursor:pointer;}
+        </style></head><body><div id="slide-container">${slideHtmlContent}</div><div class="navigation-controls"><button id="prev-btn"><i class="fas fa-arrow-left"></i></button><span id="nav-counter"></span><button id="next-btn"><i class="fas fa-arrow-right"></i></button></div><script>
+        let current=0;const slides=Array.from(document.querySelectorAll('.slide-wrapper'));const counter=document.getElementById('nav-counter');
+        function show(idx){if(idx<0||idx>=slides.length)return;slides[current].classList.remove('active');current=idx;slides[current].classList.add('active');updateNav();}
+        function updateNav(){counter.textContent=\`\${current+1} / \${slides.length}\`;document.getElementById('prev-btn').disabled=current===0;document.getElementById('next-btn').disabled=current===slides.length-1;}
+        document.getElementById('prev-btn').addEventListener('click',()=>show(current-1));document.getElementById('next-btn').addEventListener('click',()=>show(current+1));
+        document.addEventListener("keydown",e=>{if(e.key==="ArrowLeft")show(current-1);if(e.key==="ArrowRight")show(current+1);});show(0);
+        <\/script></body></html>`;
+        
+        const blob = new Blob([fullHtml], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'presentation.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      render();
+      resetView();
+      checkApiKey();
+    });
+  </script>
+</body>
+</html>
